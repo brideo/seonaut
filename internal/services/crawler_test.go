@@ -1,6 +1,7 @@
 package services_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stjudewashere/seonaut/internal/config"
@@ -73,14 +74,21 @@ func TestStartCrawlerNoDuplicateDBRecord(t *testing.T) {
 	// finishes quickly without making the test slow.
 	p := models.Project{Id: 1, URL: "http://localhost:1"}
 
-	if err := svc.StartCrawler(p, models.BasicAuth{}); err != nil {
+	crawl, err := svc.StartCrawler(p, models.BasicAuth{})
+	if err != nil {
 		t.Fatalf("first StartCrawler: unexpected error: %v", err)
+	}
+	if crawl == nil || crawl.Id == 0 {
+		t.Fatalf("first StartCrawler: expected a crawl with an id, got %+v", crawl)
+	}
+	if svc.IsCrawling(models.Project{Id: 999}) {
+		t.Fatal("IsCrawling: expected false for a project that is not being crawled")
 	}
 
 	// Second call while the first goroutine still holds the in-memory lock.
-	err := svc.StartCrawler(p, models.BasicAuth{})
-	if err == nil {
-		t.Fatal("second StartCrawler: expected an error, got nil")
+	_, err = svc.StartCrawler(p, models.BasicAuth{})
+	if !errors.Is(err, services.ErrCrawlerAlreadyRunning) {
+		t.Fatalf("second StartCrawler: expected ErrCrawlerAlreadyRunning, got %v", err)
 	}
 
 	if repo.saveCrawlCount != 1 {

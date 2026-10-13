@@ -22,27 +22,3 @@ docker:
 clean:
 	docker builder prune -f
 .PHONY: clean
-
-# Watch frontend files to run esbuild on any change
-watch:
-	esbuild ./web/css/style.css \
-		--bundle \
-		--outdir=./web/static \
-		--public-path=/resources \
-		--loader:.woff=file \
-		--loader:.woff2=file \
-		--loader:.png=file \
-		--watch
-.PHONY: watch
-
-# Run esbuild to compile the frontend files
-front:
-	esbuild ./web/css/style.css \
-		--bundle \
-		--minify \
-		--outdir=./web/static \
-		--public-path=/resources \
-		--loader:.woff=file \
-		--loader:.woff2=file \
-		--loader:.png=file
-.PHONY: front

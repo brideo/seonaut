@@ -15,15 +15,26 @@ const (
 	userAgent  = "TEST UserAgent"
 	urlHost    = "example.com"
 	urlScheme  = "https"
+
+	savedProjectID = 42
 )
 
 // Create a test repository for the service.
 type projectTestRepository struct{}
 
-func (s *projectTestRepository) SaveProject(project *models.Project, userId int) {}
-func (s *projectTestRepository) DeleteProject(project *models.Project)           {}
-func (s *projectTestRepository) DisableProject(project *models.Project)          {}
-func (s *projectTestRepository) UpdateProject(p *models.Project) error           { return nil }
+func (s *projectTestRepository) SaveProject(project *models.Project, userId int) (int64, error) {
+	return savedProjectID, nil
+}
+func (s *projectTestRepository) FindProject(id int64) (models.Project, error) {
+	if id != gid {
+		return models.Project{}, errors.New("Project does not exist")
+	}
+
+	return models.Project{Id: id, URL: projectURL}, nil
+}
+func (s *projectTestRepository) DeleteProject(project *models.Project)  {}
+func (s *projectTestRepository) DisableProject(project *models.Project) {}
+func (s *projectTestRepository) UpdateProject(p *models.Project) error  { return nil }
 func (p *projectTestRepository) FindProjectsByUser(uid int) []models.Project {
 	return []models.Project{}
 }
@@ -70,6 +81,22 @@ func TestFindProjectById(t *testing.T) {
 	}
 }
 
+// Test FindProjectByID populates the Host field and errors on unknown ids.
+func TestFindProjectByID(t *testing.T) {
+	p, err := service.FindProjectByID(gid)
+	if err != nil {
+		t.Error(err)
+	}
+
+	if p.Host != urlHost {
+		t.Errorf("p.Host: %s != %s", p.Host, urlHost)
+	}
+
+	if _, err := service.FindProjectByID(999); err == nil {
+		t.Error("FindProjectByID: should return err")
+	}
+}
+
 // Test SaveProject with different project configurations.
 func TestSaveProject(t *testing.T) {
 	table := []struct {
@@ -104,6 +131,15 @@ func TestSaveProject(t *testing.T) {
 			err := service.SaveProject(tt.project, guid)
 			if (err != nil) != tt.wantError {
 				t.Errorf("SaveProject() want error %v got %v", tt.wantError, err)
+			}
+
+			if err == nil {
+				if tt.project.Id != savedProjectID {
+					t.Errorf("SaveProject() project id %d != %d", tt.project.Id, savedProjectID)
+				}
+				if tt.project.Host != urlHost {
+					t.Errorf("SaveProject() project host %s != %s", tt.project.Host, urlHost)
+				}
 			}
 		})
 	}

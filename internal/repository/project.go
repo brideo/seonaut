@@ -1,18 +1,17 @@
 package repository
 
 import (
-	"database/sql"
 	"log"
 
 	"github.com/stjudewashere/seonaut/internal/models"
 )
 
 type ProjectRepository struct {
-	DB *sql.DB
+	DB *Conn
 }
 
-// SaveProject inserts a new project into the database.
-func (ds *ProjectRepository) SaveProject(project *models.Project, uid int) {
+// SaveProject inserts a new project into the database and returns its id.
+func (ds *ProjectRepository) SaveProject(project *models.Project, uid int) (int64, error) {
 	query := `
 		INSERT INTO projects (
 			url,
@@ -30,9 +29,8 @@ func (ds *ProjectRepository) SaveProject(project *models.Project, uid int) {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	stmt, _ := ds.DB.Prepare(query)
-	defer stmt.Close()
-	_, err := stmt.Exec(
+	res, err := ds.DB.Exec(
+		query,
 		project.URL,
 		project.IgnoreRobotsTxt,
 		project.FollowNofollow,
@@ -46,8 +44,52 @@ func (ds *ProjectRepository) SaveProject(project *models.Project, uid int) {
 		project.UserAgent,
 	)
 	if err != nil {
-		log.Printf("saveProject: %v\n", err)
+		return 0, err
 	}
+
+	return res.LastInsertId()
+}
+
+// FindProject returns the project with the specified id regardless of its owner.
+func (ds *ProjectRepository) FindProject(id int64) (models.Project, error) {
+	query := `
+		SELECT
+			id,
+			user_id,
+			url,
+			ignore_robotstxt,
+			follow_nofollow,
+			include_noindex,
+			crawl_sitemap,
+			allow_subdomains,
+			basic_auth,
+			deleting,
+			created,
+			check_external_links,
+			archive,
+			user_agent
+		FROM projects
+		WHERE id = ?`
+
+	p := models.Project{}
+	err := ds.DB.QueryRow(query, id).Scan(
+		&p.Id,
+		&p.UserId,
+		&p.URL,
+		&p.IgnoreRobotsTxt,
+		&p.FollowNofollow,
+		&p.IncludeNoindex,
+		&p.CrawlSitemap,
+		&p.AllowSubdomains,
+		&p.BasicAuth,
+		&p.Deleting,
+		&p.Created,
+		&p.CheckExternalLinks,
+		&p.Archive,
+		&p.UserAgent,
+	)
+
+	return p, err
 }
 
 // FindProjectsByUser returns a slice with all the projects of the specified user.

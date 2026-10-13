@@ -1,105 +1,219 @@
-# SEOnaut
-[![Go Report Card](https://goreportcard.com/badge/github.com/stjudewashere/seonaut)](https://goreportcard.com/report/github.com/stjudewashere/seonaut) [![GitHub](https://img.shields.io/github/license/StJudeWasHere/seonaut)](LICENSE) [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/StJudeWasHere/seonaut/test.yml)](https://github.com/StJudeWasHere/seonaut/actions/workflows/test.yml)
+# SEOnaut API
 
-SEOnaut is an open-source SEO auditing tool designed to analyze websites for issues that may impact search engine rankings. It performs a comprehensive site scan and generates a report detailing any identified issues, organized by severity and potential impact on SEO.
+[![GitHub](https://img.shields.io/github/license/brideo/seonaut)](LICENSE) [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/brideo/seonaut/test.yml)](https://github.com/brideo/seonaut/actions/workflows/test.yml)
 
-SEOnaut categorizes issues into three levels of severity: critical, high, and low. The tool can detect various SEO-related problems, such as broken links (to avoid 404 errors), redirect issues (temporary, permanent, or loops), missing or duplicate meta tags, incorrectly ordered headings, and more.
+An API-only fork of [SEOnaut](https://github.com/stjudewashere/seonaut), the open-source SEO auditing crawler.
 
-A hosted version of SEOnaut is available at [seonaut.org](https://seonaut.org).
+The crawler, issue detection engine, database schema and migrations are unchanged from upstream. What's different:
 
-![seonaut](https://github.com/user-attachments/assets/6184b418-bd54-4456-9266-fcfd4ce5726d)
+- The HTML user interface, templates, translations and cookie sessions have been removed.
+- A small JSON API, protected by a shared API key, creates users and projects and starts or stops crawls.
+- Crawl results are not exposed over HTTP. Consumers are expected to read them directly from the MySQL database.
+- Every table name can carry a configurable prefix (default `seonaut_`) so SEOnaut can share a database with other services.
 
-## Technology
+This fork is intended to run as an internal service on a private Docker network, driven by another service that holds the API key and has access to the same database.
 
-SEOnaut is a web-based application built with the Go programming language and a MySQL database for data storage. The frontend is designed for simplicity, using custom CSS and minimal vanilla JavaScript. Apache ECharts is used to provide an interactive dashboard experience.
+## Quick start
 
-While it is possible to configure a custom database and compile SEOnaut manually, using the provided Docker files is recommended. These files simplify the setup process and eliminate the need for manual configuration, allowing for quicker and easier deployment.
-
-### Quick Start Guide
-
-#### Using docker compose
-
-Using docker is the recommended way of running SEOnaut. As you need to provide a database, you can use `docker compose` to do so creating a `docker-compose.yml` file like this:
-
-```yml
-services:
-  db:
-    image: mysql:8.4
-    container_name: "SEOnaut-db"
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=seonaut
-      - MYSQL_USER=seonaut
-      - MYSQL_PASSWORD=seonaut
-    networks:
-      - seonaut_network
-
-  app:
-    image: ghcr.io/stjudewashere/seonaut:latest
-    container_name: "SEOnaut-app"
-    ports:
-      - "${SEONAUT_PORT:-9000}:9000"
-    depends_on:
-      - db
-    command: sh -c "/bin/wait && /app/seonaut"
-    environment:
-      - WAIT_HOSTS=db:3306
-      - WAIT_TIMEOUT=300
-      - WAIT_SLEEP_INTERVAL=30
-      - WAIT_HOST_CONNECT_TIMEOUT=30
-      # Seonaut config overrides
-      # - SEONAUT_SERVER_HOST=${SEONAUT_SERVER_HOST:-0.0.0.0}
-      # - SEONAUT_SERVER_PORT=${SEONAUT_INTERNAL_PORT:-9000}
-      # - SEONAUT_SERVER_URL=${SEONAUT_SERVER_URL:-http://localhost:${SEONAUT_PORT:-9000}}
-      # - SEONAUT_DATABASE_SERVER=${SEONAUT_DB_SERVER:-db}
-      # - SEONAUT_DATABASE_PORT=${SEONAUT_DB_PORT:-3306}
-      # - SEONAUT_DATABASE_USER=${SEONAUT_DB_USER:-seonaut}
-      # - SEONAUT_DATABASE_PASSWORD=${SEONAUT_DB_PASSWORD:-seonaut}
-      # - SEONAUT_DATABASE_DATABASE=${SEONAUT_DB_NAME:-seonaut}
-    networks:
-      - seonaut_network
-
-networks:
-  seonaut_network:
-    driver: bridge
+```sh
+git clone https://github.com/brideo/seonaut.git
+cd seonaut
+export SEONAUT_API_KEY="$(openssl rand -hex 32)"
+docker compose up --build -d
+curl localhost:9000/health
 ```
 
-This uses the default settings, which you can overwrite using environment variables if needed.
+The compose file starts MySQL 8.4 and the API on port 9000. The database is also published on host port 3302 so tools like TablePlus can connect with user `seonaut`, password `seonaut`, database `seonaut`. Migrations run automatically on start-up.
 
-#### Using docker from source code
+The server refuses to start without an API key.
 
-To run SEOnaut from source code, follow these steps to run it using Docker:
+## Authentication
 
-1. **Install Docker**  
-   Ensure Docker is installed on your system. You can download and install Docker from the [official website](https://www.docker.com/).
+Every request under `/api/` must carry the key, either as:
 
-2. **Clone the Repository**  
-   Clone the SEOnaut repository:
+```
+X-API-Key: <key>
+```
 
-   `git clone https://github.com/stjudewashere/seonaut.git`
+or
 
-3. **Navigate to the Project Directory**  
-   Change into the project directory:
+```
+Authorization: Bearer <key>
+```
 
-   `cd seonaut`
+Requests without a valid key receive `401` with the standard error envelope. `GET /health` is public.
 
-4. **Build and Run Docker Containers**  
-   Run the following command to build and start the Docker containers:
+The key is a single shared secret. Any caller holding it can act on any user or project, so keep the service off public networks.
 
-   `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`
+## Endpoints
 
-5. **Access the Application**  
-   Once the containers are running, open your browser and visit:
+| Method | Path | Description | Success |
+|---|---|---|---|
+| `GET` | `/health` | Liveness check, pings the database | `200` |
+| `POST` | `/api/users` | Create a user | `201` |
+| `POST` | `/api/projects` | Create a project owned by a user | `201` |
+| `POST` | `/api/projects/{id}/crawl` | Start crawling a project | `202` |
+| `POST` | `/api/projects/{id}/crawl/stop` | Stop the running crawl | `202` |
 
-   `http://localhost:9000`
+Request bodies are JSON. Unknown fields are rejected with `400`. Bodies larger than 1 MB are rejected.
 
-   SEOnaut is set up to run on port 9000 using unencrypted HTTP by default. For added security, it is recommended to configure HTTPS using a reverse proxy. This will ensure encrypted communication between the client and the server.
+### Create a user
 
-For more detailed installation and configuration instructions, refer to the [INSTALL.md](docs/INSTALL.md) file.
+```sh
+curl -X POST localhost:9000/api/users \
+  -H "X-API-Key: $SEONAUT_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"email":"crawler@example.com","password":"change-me"}'
+```
 
-## Contributing
+```json
+{"id":1,"email":"crawler@example.com"}
+```
 
-Please see [CONTRIBUTING](docs/CONTRIBUTING.md) for details.
+### Create a project
+
+```sh
+curl -X POST localhost:9000/api/projects \
+  -H "X-API-Key: $SEONAUT_API_KEY" -H 'Content-Type: application/json' \
+  -d '{"user_id":1,"url":"https://example.com","crawl_sitemap":true}'
+```
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `user_id` | int | required | Owner of the project |
+| `url` | string | required | `http` or `https` only |
+| `ignore_robotstxt` | bool | `false` | |
+| `follow_nofollow` | bool | `false` | |
+| `include_noindex` | bool | `false` | |
+| `crawl_sitemap` | bool | `false` | |
+| `allow_subdomains` | bool | `false` | |
+| `check_external_links` | bool | `false` | |
+| `basic_auth` | bool | `false` | When true, the crawl request must supply credentials |
+| `archive` | bool | `false` | Save a WACZ archive of the crawl under `archive/<project id>/` |
+| `user_agent` | string | `[crawler] agent` from config | |
+
+```json
+{
+  "id": 1,
+  "user_id": 1,
+  "url": "https://example.com",
+  "host": "example.com",
+  "ignore_robotstxt": false,
+  "follow_nofollow": false,
+  "include_noindex": false,
+  "crawl_sitemap": true,
+  "allow_subdomains": false,
+  "check_external_links": false,
+  "basic_auth": false,
+  "archive": false,
+  "user_agent": "Mozilla/5.0 (compatible; SEOnautBot/1.0; +https://seonaut.org/bot)",
+  "created": "2026-10-13T05:34:41Z"
+}
+```
+
+### Start a crawl
+
+```sh
+curl -X POST localhost:9000/api/projects/1/crawl -H "X-API-Key: $SEONAUT_API_KEY"
+```
+
+The body is optional. For projects created with `basic_auth: true`, send the site credentials:
+
+```json
+{"auth_user":"name","auth_pass":"secret"}
+```
+
+```json
+{"id":1,"project_id":1,"url":"https://example.com","start":"2026-10-13T05:34:41Z","crawling":true}
+```
+
+The crawl runs in the background. Only one crawl per project can run at a time; a second request returns `409`. Starting a new crawl deletes the data from the project's previous crawl once the new one finishes.
+
+### Stop a crawl
+
+```sh
+curl -X POST localhost:9000/api/projects/1/crawl/stop -H "X-API-Key: $SEONAUT_API_KEY"
+```
+
+```json
+{"stopping":true}
+```
+
+Returns `404` if the project has no running crawl.
+
+### Errors
+
+All errors share one envelope:
+
+```json
+{"error":{"code":"crawl_in_progress","message":"project is already being crawled"}}
+```
+
+| Status | Code | When |
+|---|---|---|
+| `400` | `bad_request` | Malformed JSON, unknown field, invalid id |
+| `400` | `validation_error` | Invalid email or password, unsupported URL scheme, empty user agent, unknown `user_id`, missing basic auth credentials |
+| `401` | `unauthorized` | Missing or wrong API key |
+| `404` | `not_found` | Unknown route or project, or no active crawl to stop |
+| `405` | `method_not_allowed` | |
+| `409` | `user_exists` | Email already registered |
+| `409` | `crawl_in_progress` | Project already being crawled |
+| `409` | `project_deleting` | Project is being deleted |
+| `500` | `internal_error` | Anything else. Details are logged, not returned |
+
+## Reading results
+
+Results live in MySQL. With the default prefix the main tables are:
+
+| Table | Contents |
+|---|---|
+| `seonaut_crawls` | One row per crawl: `start`, `end`, `total_urls`, `total_issues`, critical/alert/warning counts. `end` is `NULL` while crawling |
+| `seonaut_pagereports` | One row per crawled URL: status code, title, description, canonical, depth, etc. |
+| `seonaut_issues` | Issues found, joined to `seonaut_pagereports` and `seonaut_issue_types` |
+| `seonaut_issue_types` | Issue type names and priorities |
+| `seonaut_links`, `seonaut_external_links`, `seonaut_images`, ... | Per-page resources |
+
+A crawl is finished when `seonaut_crawls.end` is not null. Restarting the service deletes any unfinished crawl rows, since crawls run in memory.
+
+## Configuration
+
+Settings come from the `config` TOML file and can be overridden with `SEONAUT_<SECTION>_<KEY>` environment variables.
+
+| Config key | Environment variable | Default | Description |
+|---|---|---|---|
+| `server.host` | `SEONAUT_SERVER_HOST` | `0.0.0.0` | Bind address |
+| `server.port` | `SEONAUT_SERVER_PORT` | `9000` | Port |
+| `database.server` | `SEONAUT_DATABASE_SERVER` | `db` | MySQL host |
+| `database.port` | `SEONAUT_DATABASE_PORT` | `3306` | |
+| `database.user` | `SEONAUT_DATABASE_USER` | `seonaut` | |
+| `database.password` | `SEONAUT_DATABASE_PASSWORD` | `seonaut` | |
+| `database.database` | `SEONAUT_DATABASE_DATABASE` | `seonaut` | |
+| `database.table_prefix` | `SEONAUT_DATABASE_TABLE_PREFIX` | `seonaut_` | Prefix for every table and foreign key name. Set to an empty string for upstream-compatible names |
+| `crawler.agent` | `SEONAUT_CRAWLER_AGENT` | SEOnautBot UA | Default crawler user agent |
+| `api.key` | `SEONAUT_API_KEY` | none, required | Shared API secret |
+
+The table prefix is applied at runtime: migrations and queries are rewritten as they run, so the SQL in the repository keeps upstream's table names. Pick the prefix once before the first start; changing it later leaves the old tables behind.
+
+## Development
+
+Requires Go 1.25 and Docker.
+
+```sh
+make test     # go test -race ./internal/...
+make vet
+make docker   # compose with the db port published on 3306
+```
+
+For local runs outside Docker, copy `config` to `config.local`, point it at your MySQL instance, and run `make run` from the repository root (the `migrations` and `archive` paths are relative to the working directory).
+
+## Syncing with upstream
+
+```sh
+git remote add upstream https://github.com/stjudewashere/seonaut.git
+git fetch upstream
+git merge upstream/main
+```
+
+Changes to `internal/crawler`, `internal/issues`, `internal/repository` and `migrations` merge cleanly. Upstream changes to the removed UI (`web/`, `internal/routes`, `translations/`) should be dropped. If an upstream migration creates a new table, add its name to `tableNames` in `internal/repository/conn.go`.
 
 ## License
 

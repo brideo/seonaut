@@ -15,6 +15,13 @@ import (
 	"github.com/stjudewashere/seonaut/internal/models"
 )
 
+// Issue priorities.
+const (
+	Critical = iota + 1
+	Alert
+	Warning
+)
+
 type (
 	ReportManagerRepository interface {
 		SaveIssues(<-chan *models.Issue)

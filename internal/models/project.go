@@ -6,6 +6,7 @@ import (
 
 type Project struct {
 	Id                 int64
+	UserId             int
 	URL                string
 	Host               string
 	IgnoreRobotsTxt    bool

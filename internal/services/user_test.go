@@ -21,12 +21,6 @@ var testUser = &models.User{
 	Password: "$2a$10$REKj9zUr.reKqlKETKpq3OGGBhzyhQ2TQ3wOVnToroO.Qh3nuWziK",
 }
 
-type testTranslator struct{}
-
-func (ft *testTranslator) LangIsSupported(l string) bool {
-	return true
-}
-
 // Create a mock repository for the user service.
 // The repository only contains the testUSer.
 type userTestRepository struct {
@@ -62,11 +56,8 @@ func (s *userTestRepository) DeleteUser(u *models.User) error {
 func (s *userTestRepository) DisableUser(*models.User) error {
 	return nil
 }
-func (s *userTestRepository) UserUpdateSettings(user *models.User, lang, theme string) error {
-	return nil
-}
 
-var userService = services.NewUserService(&userTestRepository{}, &testTranslator{})
+var userService = services.NewUserService(&userTestRepository{})
 
 // TestSignup tests the SignUp method of the user service.
 // It verifies the behavior of the SignUp function for different input scenarios.

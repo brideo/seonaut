@@ -1,14 +1,13 @@
 package repository
 
 import (
-	"database/sql"
 	"log"
 
 	"github.com/stjudewashere/seonaut/internal/models"
 )
 
 type ExportRepository struct {
-	DB *sql.DB
+	DB *Conn
 }
 
 // Send all internal links through a read-only channel

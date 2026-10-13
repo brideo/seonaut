@@ -12,27 +12,9 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=linux \
     go build -o seonaut cmd/server/main.go
 
-FROM node:18-alpine3.18 AS front
-
-WORKDIR /home/node
-COPY ./web ./app/web
-
-RUN --mount=type=cache,target=/root/.npm \
-	npm install --save-exact esbuild && \
-	./node_modules/esbuild/bin/esbuild ./app/web/css/style.css \
-	--bundle \
-	--minify \
-	--outdir=./app/web/static \
-	--public-path=/resources \
-	--loader:.woff=file \
-	--loader:.woff2=file
-
 FROM alpine:latest AS production
 
 COPY --from=builder /app/seonaut /app/seonaut
-COPY --from=front /home/node/app /app/
-
-COPY ./translations /app/translations
 COPY ./migrations /app/migrations
 COPY ./config /app/config
 

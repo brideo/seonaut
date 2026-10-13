@@ -1,13 +1,11 @@
 package repository
 
 import (
-	"database/sql"
-
 	"github.com/stjudewashere/seonaut/internal/models"
 )
 
 type UserRepository struct {
-	DB *sql.DB
+	DB *Conn
 }
 
 // UserSignup inserts a new user with the provided email and password into the database.

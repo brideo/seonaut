@@ -9,10 +9,15 @@ port = 3306
 user = "seonaut"
 password = "seonaut"
 database = "seonaut"
+# Prepended to every table name (and the migrations table). Override with
+# SEONAUT_DATABASE_TABLE_PREFIX. Set to "" to use the upstream table names.
+table_prefix = "seonaut_"
 
 [crawler]
 agent = "Mozilla/5.0 (compatible; SEOnautBot/1.0; +https://seonaut.org/bot)"
 
-[UI]
-language = "en"
-theme = "dark"
+# Shared secret required on every /api request, as "X-API-Key: <key>" or
+# "Authorization: Bearer <key>". Prefer setting it via the SEONAUT_API_KEY
+# environment variable instead of committing it here.
+[api]
+key = ""

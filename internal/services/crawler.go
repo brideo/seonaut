@@ -21,6 +21,10 @@ const (
 	ClientTimeout   = 10    // HTTP client timeout in seconds.
 )
 
+// ErrCrawlerAlreadyRunning is returned when a crawl is started for a project
+// that is already being crawled.
+var ErrCrawlerAlreadyRunning = errors.New("project is already being crawled")
+
 type CrawlerServiceRepository interface {
 	SaveCrawl(models.Project) (*models.Crawl, error)
 	GetLastCrawl(p *models.Project) models.Crawl
@@ -67,10 +71,10 @@ func NewCrawlerService(r CrawlerServiceRepository, s CrawlerServicesContainer) *
 // It adds a new crawler for the project, it returns an error if there's one already
 // running or if there's an error creating it.
 // Finally the previous crawl's data is removed and the crawl is returned.
-func (s *CrawlerService) StartCrawler(p models.Project, b models.BasicAuth) error {
+func (s *CrawlerService) StartCrawler(p models.Project, b models.BasicAuth) (*models.Crawl, error) {
 	u, err := url.Parse(p.URL)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if u.Path == "" {
@@ -82,7 +86,7 @@ func (s *CrawlerService) StartCrawler(p models.Project, b models.BasicAuth) erro
 	// end timestamp.
 	c, err := s.addCrawler(u, &p, &b)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	previousCrawl := s.repository.GetLastCrawl(&p)
@@ -90,8 +94,9 @@ func (s *CrawlerService) StartCrawler(p models.Project, b models.BasicAuth) erro
 	crawl, err := s.repository.SaveCrawl(p)
 	if err != nil {
 		s.removeCrawler(&p)
-		return err
+		return nil, err
 	}
+	crawl.Crawling = true
 
 	go func() {
 		defer s.removeCrawler(&p)
@@ -137,7 +142,20 @@ func (s *CrawlerService) StartCrawler(p models.Project, b models.BasicAuth) erro
 		log.Printf("Crawled %d urls in %s", crawl.TotalURLs, p.URL)
 	}()
 
-	return nil
+	// Return a copy so callers don't race with the crawling goroutine.
+	result := *crawl
+
+	return &result, nil
+}
+
+// IsCrawling reports whether the project currently has a running crawler.
+func (s *CrawlerService) IsCrawling(p models.Project) bool {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	_, ok := s.crawlers[p.Id]
+
+	return ok
 }
 
 // Get a slice with 'LastCrawlsLimit' number of the crawls
@@ -172,7 +190,7 @@ func (s *CrawlerService) addCrawler(u *url.URL, p *models.Project, b *models.Bas
 	defer s.lock.Unlock()
 
 	if _, ok := s.crawlers[p.Id]; ok {
-		return nil, errors.New("project is already being crawled")
+		return nil, ErrCrawlerAlreadyRunning
 	}
 
 	options := &crawler.Options{

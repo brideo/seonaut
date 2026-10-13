@@ -11,7 +11,7 @@ import (
 )
 
 type CrawlRepository struct {
-	DB *sql.DB
+	DB *Conn
 }
 
 // SaveCrawl inserts a new crawl into the database and returns a new Crawl model with

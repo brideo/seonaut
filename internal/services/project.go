@@ -13,7 +13,8 @@ type (
 		DeleteArchive(*models.Project)
 	}
 	ProjectServiceRepository interface {
-		SaveProject(*models.Project, int)
+		SaveProject(*models.Project, int) (int64, error)
+		FindProject(id int64) (models.Project, error)
 		DeleteProject(*models.Project)
 		DisableProject(*models.Project)
 		UpdateProject(p *models.Project) error
@@ -46,7 +47,8 @@ func NewProjectService(r ProjectServiceRepository, a ArchiveRemover) *ProjectSer
 
 // SaveProject stores a new project.
 // It trims the spaces in the project's URL field and checks the scheme to
-// make sure it is http or https.
+// make sure it is http or https. On success the project's Id, UserId and
+// Host fields are populated.
 func (s *ProjectService) SaveProject(p *models.Project, userId int) error {
 	p.URL = strings.TrimSpace(p.URL)
 
@@ -55,9 +57,35 @@ func (s *ProjectService) SaveProject(p *models.Project, userId int) error {
 		return err
 	}
 
-	s.repository.SaveProject(p, userId)
+	id, err := s.repository.SaveProject(p, userId)
+	if err != nil {
+		return err
+	}
+
+	parsedURL, _ := url.Parse(p.URL)
+	p.Id = id
+	p.UserId = userId
+	p.Host = parsedURL.Host
 
 	return nil
+}
+
+// FindProjectByID returns the project with the given id regardless of its owner.
+// It populates the Host field from the project's URL.
+func (s *ProjectService) FindProjectByID(id int64) (models.Project, error) {
+	project, err := s.repository.FindProject(id)
+	if err != nil {
+		return project, err
+	}
+
+	parsedURL, err := url.Parse(project.URL)
+	if err != nil {
+		return project, err
+	}
+
+	project.Host = parsedURL.Host
+
+	return project, nil
 }
 
 // Return a project specified by id and user.

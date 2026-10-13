@@ -1,11 +1,18 @@
 package config
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 
 	"github.com/spf13/viper"
 )
+
+// DefaultTablePrefix is used when no table prefix is configured.
+const DefaultTablePrefix = "seonaut_"
+
+// ErrMissingAPIKey is returned when no API key is configured.
+var ErrMissingAPIKey = errors.New("api key is required (set [api] key in the config file or the SEONAUT_API_KEY environment variable)")
 
 // CrawlerConfig stores the configuration for the crawler.
 type CrawlerConfig struct {
@@ -26,12 +33,15 @@ type DBConfig struct {
 	User   string `mapstructure:"user"`
 	Pass   string `mapstructure:"password"`
 	Name   string `mapstructure:"database"`
+
+	// TablePrefix is prepended to every table name, including the
+	// migrations table. Defaults to "seonaut_".
+	TablePrefix string `mapstructure:"table_prefix"`
 }
 
-// UIConfig stores the UI settings.
-type UIConfig struct {
-	Language string `mapstructure:"language"`
-	Theme    string `mapstructure:"theme"`
+// APIConfig stores the settings for the JSON API.
+type APIConfig struct {
+	Key string `mapstructure:"key"`
 }
 
 // Config stores the configuration for the application.
@@ -39,10 +49,11 @@ type Config struct {
 	Crawler    *CrawlerConfig    `mapstructure:"crawler"`
 	HTTPServer *HTTPServerConfig `mapstructure:"server"`
 	DB         *DBConfig         `mapstructure:"database"`
-	UIConfig   *UIConfig         `mapstructure:"UI"`
+	API        *APIConfig        `mapstructure:"api"`
 }
 
 // NewConfig loads the configuration from the specified file and path.
+// It returns ErrMissingAPIKey if no API key has been configured.
 func NewConfig(configFile string) (*Config, error) {
 	viper.AddConfigPath(filepath.Dir(configFile))
 	viper.SetConfigName(filepath.Base(configFile))
@@ -53,6 +64,11 @@ func NewConfig(configFile string) (*Config, error) {
 	viper.SetEnvPrefix("SEONAUT") // Optional: prefix for env vars
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
+	// Register the key so that SEONAUT_API_KEY is picked up even when the
+	// [api] section is missing from the config file.
+	viper.SetDefault("api.key", "")
+	viper.SetDefault("database.table_prefix", DefaultTablePrefix)
+
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
 	}
@@ -62,6 +78,10 @@ func NewConfig(configFile string) (*Config, error) {
 	err := viper.Unmarshal(&config)
 	if err != nil {
 		return nil, err
+	}
+
+	if config.API == nil || strings.TrimSpace(config.API.Key) == "" {
+		return nil, ErrMissingAPIKey
 	}
 
 	return &config, nil

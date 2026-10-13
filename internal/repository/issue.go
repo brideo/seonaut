@@ -9,7 +9,7 @@ import (
 )
 
 type IssueRepository struct {
-	DB *sql.DB
+	DB *Conn
 }
 
 // SaveIssues inserts the issues it receives in the iStream channel into the database

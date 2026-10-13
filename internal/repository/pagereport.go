@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"database/sql"
 	"log"
 	"math"
 	"net/url"
@@ -10,7 +9,7 @@ import (
 )
 
 type PageReportRepository struct {
-	DB *sql.DB
+	DB *Conn
 }
 
 // Save a pagereport and all its related data to the database. Once the pagereport is saved it uses its id to

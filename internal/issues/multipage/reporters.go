@@ -7,12 +7,17 @@ import (
 	"github.com/stjudewashere/seonaut/internal/models"
 )
 
+// Querier is the subset of *sql.DB the reporters need.
+type Querier interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+}
+
 type SqlReporter struct {
-	db *sql.DB
+	db Querier
 }
 
 // NewSqlReporter creates a new SqlReporter with the given SQL database connection.
-func NewSqlReporter(db *sql.DB) *SqlReporter {
+func NewSqlReporter(db Querier) *SqlReporter {
 	return &SqlReporter{
 		db: db,
 	}

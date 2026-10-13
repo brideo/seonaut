@@ -24,9 +24,6 @@ var (
 
 	// Error returned when trying to create a user that is already signed up.
 	ErrUserExists = errors.New("user service: user already exists")
-
-	// Error returned when trying to set a language that is not supported.
-	ErrInvalidLang = errors.New("user service: lang not valid")
 )
 
 const (
@@ -43,24 +40,17 @@ type (
 		UserUpdatePassword(email, hashedPassword string) error
 		DeleteUser(user *models.User) error
 		DisableUser(user *models.User) error
-		UserUpdateSettings(user *models.User, lang, theme string) error
-	}
-
-	TranslatorService interface {
-		LangIsSupported(lang string) bool
 	}
 
 	UserService struct {
 		repository  UserServiceRepository
-		translator  TranslatorService
 		deleteHooks []DeleteHook
 	}
 )
 
-func NewUserService(r UserServiceRepository, t TranslatorService) *UserService {
+func NewUserService(r UserServiceRepository) *UserService {
 	return &UserService{
 		repository: r,
-		translator: t,
 	}
 }
 
@@ -124,23 +114,6 @@ func (s *UserService) UpdatePassword(user *models.User, currentPassword, newPass
 	}
 
 	err = s.repository.UserUpdatePassword(user.Email, string(hashedPassword))
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// UpdatePassword updates the password for the user with the given email.
-// It validates the new password and generates a hashed password using bcrypt before storing it.
-func (s *UserService) UpdateUserSettings(user *models.User, lang, theme string) error {
-	if !s.translator.LangIsSupported(lang) {
-		return ErrInvalidLang
-	}
-
-	theme = s.getValidatedTheme(theme)
-
-	err := s.repository.UserUpdateSettings(user, lang, theme)
 	if err != nil {
 		return err
 	}

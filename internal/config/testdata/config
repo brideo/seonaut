@@ -11,3 +11,6 @@ database = "test"
 
 [crawler]
 agent = "testing"
+
+[api]
+key = "test-key"

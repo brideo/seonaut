@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"database/sql"
 	"log"
 	"sort"
 
@@ -9,7 +8,7 @@ import (
 )
 
 type DashboardRepository struct {
-	DB *sql.DB
+	DB *Conn
 }
 
 // CountByCanonical returns the number of pagereports in a crawl that are of type "text/html"

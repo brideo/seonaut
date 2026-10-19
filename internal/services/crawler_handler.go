@@ -96,8 +96,10 @@ func (s *CrawlerHandler) responseCallback(crawl *models.Crawl, p *models.Project
 		}
 
 		// Add the indirect URLs such as canonicals, redirects or hreflang URLs to the crawler.
-		// In of the URL being blocked by the robots.txt save a new blocked PageReport.
-		for _, u := range s.getInderictURLs(pageReport) {
+		// A nofollow page's canonical, hreflang and iframe URLs are skipped like its links
+		// (unless the project follows nofollow); its redirect is always followed, as that
+		// is the page itself. If the URL is blocked by robots.txt save a blocked PageReport.
+		for _, u := range s.getInderictURLs(pageReport, !pageReport.Nofollow || p.FollowNofollow) {
 			err := c.AddRequest(&crawler.RequestMessage{URL: u, Data: requestData})
 			if errors.Is(err, crawler.ErrBlockedByRobotstxt) {
 				s.saveBlockedPageReport(u, crawl)
@@ -339,26 +341,26 @@ func (s *CrawlerHandler) checkExternalLinks(client crawler.Client, pageReport *m
 	}
 }
 
-// Returns a slice with all the crawlable Links from the PageReport's links.
-// URLs extracted from internal Links and ExternalLinks are crawlable only if they don't have
-// the "nofollow" attribute. If they have the "nofollow" attribute, they are also considered
-// crawlable if the crawler's FollowNofollow option is enabled.
-func (s *CrawlerHandler) getInderictURLs(p *models.PageReport) []*url.URL {
+// Returns the URLs a page points to other than through its links: its redirect, and,
+// when followLinks is true, its canonical, hreflang and iframe URLs.
+func (s *CrawlerHandler) getInderictURLs(p *models.PageReport, followLinks bool) []*url.URL {
 	var urls []*url.URL
 	var indirect []string
-
-	for _, l := range p.Hreflangs {
-		indirect = append(indirect, l.URL)
-	}
-
-	indirect = append(indirect, p.Iframes...)
 
 	if p.RedirectURL != "" {
 		indirect = append(indirect, p.RedirectURL)
 	}
 
-	if p.Canonical != "" {
-		indirect = append(indirect, p.Canonical)
+	if followLinks {
+		for _, l := range p.Hreflangs {
+			indirect = append(indirect, l.URL)
+		}
+
+		indirect = append(indirect, p.Iframes...)
+
+		if p.Canonical != "" {
+			indirect = append(indirect, p.Canonical)
+		}
 	}
 
 	for _, r := range indirect {

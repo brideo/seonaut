@@ -631,15 +631,18 @@ func (p *Parser) newLink(n *html.Node) (models.Link, error) {
 
 	rel := strings.TrimSpace(htmlquery.SelectAttr(n, "rel"))
 
+	// rel values are case-insensitive: rel="NoFollow" is still nofollow.
+	relLower := strings.ToLower(rel)
+
 	l := models.Link{
 		URL:       u.String(),
 		ParsedURL: u,
 		Rel:       rel,
 		Text:      p.sanitizer.Sanitize(strings.TrimSpace(htmlquery.InnerText(n))),
 		External:  u.Host != p.ParsedURL.Host,
-		NoFollow:  strings.Contains(rel, "nofollow"),
-		Sponsored: strings.Contains(rel, "sponsored"),
-		UGC:       strings.Contains(rel, "ugc"),
+		NoFollow:  strings.Contains(relLower, "nofollow"),
+		Sponsored: strings.Contains(relLower, "sponsored"),
+		UGC:       strings.Contains(relLower, "ugc"),
 	}
 
 	return l, nil

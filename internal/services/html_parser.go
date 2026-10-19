@@ -181,9 +181,12 @@ func hashString(input []byte) (string, error) {
 }
 
 // containsAny checks if a string contains any of the substrings.
+// containsAny reports whether s contains any of the substrings, ignoring case
+// (robots directives are case-insensitive: "NOFOLLOW" is "nofollow").
 func containsAny(s string, substrings ...string) bool {
+	s = strings.ToLower(s)
 	for _, substr := range substrings {
-		if strings.Contains(s, substr) {
+		if strings.Contains(s, strings.ToLower(substr)) {
 			return true
 		}
 	}

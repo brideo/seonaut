@@ -82,6 +82,44 @@ func (h *Handler) startCrawl(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resumeCrawl handles POST /api/projects/{id}/crawl/resume.
+func (h *Handler) resumeCrawl(w http.ResponseWriter, r *http.Request) {
+	project, ok := h.loadProject(w, r)
+	if !ok {
+		return
+	}
+
+	var req startCrawlRequest
+	if err := decodeJSON(w, r, &req, true); err != nil {
+		writeError(w, http.StatusBadRequest, codeBadRequest, "invalid JSON body: "+err.Error())
+		return
+	}
+
+	if project.Deleting {
+		writeError(w, http.StatusConflict, codeProjectDeleting, "project is being deleted")
+		return
+	}
+
+	if project.BasicAuth && req.AuthUser == "" {
+		writeError(w, http.StatusBadRequest, codeValidation, "project requires basic auth: auth_user and auth_pass must be provided")
+		return
+	}
+
+	crawl, err := h.Crawler.ResumeCrawler(project, models.BasicAuth{AuthUser: req.AuthUser, AuthPass: req.AuthPass})
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, crawlResponse{
+		ID:        crawl.Id,
+		ProjectID: crawl.ProjectId,
+		URL:       crawl.URL,
+		Start:     crawl.Start,
+		Crawling:  true,
+	})
+}
+
 // stopCrawl handles POST /api/projects/{id}/crawl/stop.
 func (h *Handler) stopCrawl(w http.ResponseWriter, r *http.Request) {
 	project, ok := h.loadProject(w, r)

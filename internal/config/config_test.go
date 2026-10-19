@@ -83,3 +83,28 @@ func TestMissingAPIKey(t *testing.T) {
 		t.Errorf("expected ErrMissingAPIKey, got %v", err)
 	}
 }
+
+func TestCrawlLimitsFromEnv(t *testing.T) {
+	t.Setenv("SEONAUT_API_KEY", "env-key")
+
+	c, err := config.NewConfig("./testdata/config_noapi")
+	if err != nil {
+		t.Fatalf("Error loading config file: %v", err)
+	}
+
+	if c.Crawler.Limit != config.DefaultCrawlLimit || c.Crawler.TimeoutHours != config.DefaultCrawlTimeoutHours {
+		t.Errorf("default limits %d/%d, want %d/%d", c.Crawler.Limit, c.Crawler.TimeoutHours, config.DefaultCrawlLimit, config.DefaultCrawlTimeoutHours)
+	}
+
+	t.Setenv("SEONAUT_CRAWLER_LIMIT", "250000")
+	t.Setenv("SEONAUT_CRAWLER_TIMEOUT_HOURS", "48")
+
+	c, err = config.NewConfig("./testdata/config_noapi")
+	if err != nil {
+		t.Fatalf("Error loading config file: %v", err)
+	}
+
+	if c.Crawler.Limit != 250000 || c.Crawler.TimeoutHours != 48 {
+		t.Errorf("env limits %d/%d, want 250000/48", c.Crawler.Limit, c.Crawler.TimeoutHours)
+	}
+}

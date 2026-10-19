@@ -17,7 +17,7 @@ type CrawlRepository struct {
 // SaveCrawl inserts a new crawl into the database and returns a new Crawl model with
 // the data provided by the project.
 func (ds *CrawlRepository) SaveCrawl(p models.Project) (*models.Crawl, error) {
-	stmt, _ := ds.DB.Prepare("INSERT INTO crawls (project_id) VALUES (?)")
+	stmt, _ := ds.DB.Prepare("INSERT INTO crawls (project_id, last_activity) VALUES (?, CURRENT_TIMESTAMP)")
 	defer stmt.Close()
 	res, err := stmt.Exec(p.Id)
 
@@ -227,7 +227,8 @@ func (ds *CrawlRepository) DeleteProjectCrawls(p *models.Project) {
 	}
 }
 
-// Deletes all crawls that are unfinished and have the issues_end field set to null.
+// Deletes the unfinished crawls (issues_end is null) that have no page reports.
+// Unfinished crawls with page reports are kept so they can be resumed.
 // It cleans up the crawl data for each unfinished crawl before deleting it.
 func (ds *CrawlRepository) DeleteUnfinishedCrawls() {
 	query := `
@@ -235,6 +236,7 @@ func (ds *CrawlRepository) DeleteUnfinishedCrawls() {
 			crawls.id
 		FROM crawls
 		WHERE crawls.issues_end IS NULL
+			AND NOT EXISTS (SELECT 1 FROM pagereports WHERE pagereports.crawl_id = crawls.id)
 	`
 	count := 0
 
@@ -324,5 +326,181 @@ func (ds *CrawlRepository) UpdateCrawl(crawl *models.Crawl) {
 	)
 	if err != nil {
 		log.Printf("SaveIssuesCount: %v\n", err)
+	}
+}
+
+// TouchCrawl records that the crawl is still making progress.
+func (ds *CrawlRepository) TouchCrawl(crawlId int64) {
+	_, err := ds.DB.Exec("UPDATE crawls SET last_activity = CURRENT_TIMESTAMP WHERE id = ?", crawlId)
+	if err != nil {
+		log.Printf("TouchCrawl: %v\n", err)
+	}
+}
+
+// MarkCrawlEnded stores the crawl's end time as soon as it stops requesting URLs,
+// so the crawl shows as analysing issues while the multipage issues are created.
+func (ds *CrawlRepository) MarkCrawlEnded(crawl *models.Crawl) {
+	_, err := ds.DB.Exec("UPDATE crawls SET end = ?, last_activity = CURRENT_TIMESTAMP WHERE id = ?", crawl.End, crawl.Id)
+	if err != nil {
+		log.Printf("MarkCrawlEnded: %v\n", err)
+	}
+}
+
+// GetLastFinishedCrawl returns the project's most recent finished crawl older than
+// the crawl with the "beforeId" id. The returned crawl's Id is 0 if there's none.
+func (ds *CrawlRepository) GetLastFinishedCrawl(p *models.Project, beforeId int64) models.Crawl {
+	crawl := models.Crawl{ProjectId: p.Id}
+
+	query := `
+		SELECT id
+		FROM crawls
+		WHERE project_id = ? AND issues_end IS NOT NULL AND id < ?
+		ORDER BY id DESC LIMIT 1`
+
+	err := ds.DB.QueryRow(query, p.Id, beforeId).Scan(&crawl.Id)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("GetLastFinishedCrawl project id %d: %v\n", p.Id, err)
+	}
+
+	return crawl
+}
+
+// DeleteUnfinishedProjectCrawls deletes the project's unfinished crawls and their data,
+// except for the crawl with the "exceptId" id.
+func (ds *CrawlRepository) DeleteUnfinishedProjectCrawls(p *models.Project, exceptId int64) {
+	query := `
+		SELECT id
+		FROM crawls
+		WHERE project_id = ? AND issues_end IS NULL AND id != ?`
+
+	rows, err := ds.DB.Query(query, p.Id, exceptId)
+	if err != nil {
+		log.Printf("DeleteUnfinishedProjectCrawls: %v\n", err)
+		return
+	}
+
+	crawls := []*models.Crawl{}
+	for rows.Next() {
+		c := &models.Crawl{}
+		if err := rows.Scan(&c.Id); err != nil {
+			log.Printf("DeleteUnfinishedProjectCrawls: %v\n", err)
+			continue
+		}
+		crawls = append(crawls, c)
+	}
+	rows.Close()
+
+	for _, c := range crawls {
+		ds.DeleteCrawlData(c)
+		if _, err := ds.DB.Exec("DELETE FROM crawls WHERE id = ?", c.Id); err != nil {
+			log.Printf("DeleteUnfinishedProjectCrawls: %v\n", err)
+		}
+	}
+}
+
+// CrawledURLs returns the URL of every page report stored for the crawl.
+func (ds *CrawlRepository) CrawledURLs(crawlId int64) []string {
+	urls := []string{}
+
+	rows, err := ds.DB.Query("SELECT url FROM pagereports WHERE crawl_id = ?", crawlId)
+	if err != nil {
+		log.Printf("CrawledURLs: %v\n", err)
+		return urls
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			log.Printf("CrawledURLs: %v\n", err)
+			continue
+		}
+		urls = append(urls, u)
+	}
+
+	return urls
+}
+
+// FrontierURLs calls f with every URL the crawl's page reports point to: links, redirects,
+// canonicals, hreflangs, iframes and resources. Depth is the depth of the page report the
+// URL was found on plus one. Resource URLs are crawled whatever their domain, so they are
+// passed with resource set to true. Nofollow links are skipped unless followNofollow is
+// true and external links are only included when includeExternal is true.
+// URLs may be repeated and may already be crawled; the crawler discards those.
+func (ds *CrawlRepository) FrontierURLs(crawlId int64, followNofollow, includeExternal bool, f func(u string, depth int, resource bool)) {
+	queries := []struct {
+		query    string
+		resource bool
+	}{
+		{"SELECT l.url, p.depth FROM links l JOIN pagereports p ON p.id = l.pagereport_id WHERE l.crawl_id = ? AND (l.nofollow = 0 OR ?)", false},
+		{"SELECT p.redirect_url, p.depth FROM pagereports p WHERE p.crawl_id = ? AND p.redirect_url IS NOT NULL AND p.redirect_url != '' AND ? IS NOT NULL", false},
+		{"SELECT p.canonical, p.depth FROM pagereports p WHERE p.crawl_id = ? AND p.canonical IS NOT NULL AND p.canonical != '' AND ? IS NOT NULL", false},
+		{"SELECT h.to_url, p.depth FROM hreflangs h JOIN pagereports p ON p.id = h.pagereport_id WHERE h.crawl_id = ? AND ? IS NOT NULL", false},
+		{"SELECT i.url, p.depth FROM iframes i JOIN pagereports p ON p.id = i.pagereport_id WHERE i.crawl_id = ? AND ? IS NOT NULL", false},
+		{"SELECT i.url, p.depth FROM images i JOIN pagereports p ON p.id = i.pagereport_id WHERE i.crawl_id = ? AND ? IS NOT NULL", true},
+		{"SELECT s.url, p.depth FROM scripts s JOIN pagereports p ON p.id = s.pagereport_id WHERE s.crawl_id = ? AND ? IS NOT NULL", true},
+		{"SELECT s.url, p.depth FROM styles s JOIN pagereports p ON p.id = s.pagereport_id WHERE s.crawl_id = ? AND ? IS NOT NULL", true},
+		{"SELECT a.url, p.depth FROM audios a JOIN pagereports p ON p.id = a.pagereport_id WHERE a.crawl_id = ? AND ? IS NOT NULL", true},
+		{"SELECT v.url, p.depth FROM videos v JOIN pagereports p ON p.id = v.pagereport_id WHERE v.crawl_id = ? AND ? IS NOT NULL", true},
+	}
+
+	if includeExternal {
+		queries = append(queries, struct {
+			query    string
+			resource bool
+		}{"SELECT l.url, p.depth FROM external_links l JOIN pagereports p ON p.id = l.pagereport_id WHERE l.crawl_id = ? AND (l.nofollow = 0 OR ?)", false})
+	}
+
+	for _, q := range queries {
+		rows, err := ds.DB.Query(q.query, crawlId, followNofollow)
+		if err != nil {
+			log.Printf("FrontierURLs: %v\n", err)
+			continue
+		}
+
+		for rows.Next() {
+			var u string
+			var depth int
+			if err := rows.Scan(&u, &depth); err != nil {
+				log.Printf("FrontierURLs: %v\n", err)
+				continue
+			}
+			f(u, depth+1, q.resource)
+		}
+		rows.Close()
+	}
+}
+
+// RecountCrawl sets the crawl's URL and link totals from the data stored for it. A crawl
+// keeps these totals in memory while it runs, so a resumed crawl recounts them first.
+// URLs blocked by robots.txt are the page reports that were never requested
+// (crawled = 0 and no status code).
+func (ds *CrawlRepository) RecountCrawl(crawl *models.Crawl) {
+	query := `
+		SELECT
+			(SELECT count(*) FROM pagereports WHERE crawl_id = ?),
+			(SELECT count(*) FROM pagereports WHERE crawl_id = ? AND noindex = 1),
+			(SELECT count(*) FROM pagereports WHERE crawl_id = ? AND crawled = 0 AND status_code = 0),
+			(SELECT count(*) FROM links WHERE crawl_id = ? AND nofollow = 0),
+			(SELECT count(*) FROM links WHERE crawl_id = ? AND nofollow = 1),
+			(SELECT count(*) FROM external_links WHERE crawl_id = ? AND nofollow = 0),
+			(SELECT count(*) FROM external_links WHERE crawl_id = ? AND nofollow = 1),
+			(SELECT count(*) FROM external_links WHERE crawl_id = ? AND sponsored = 1),
+			(SELECT count(*) FROM external_links WHERE crawl_id = ? AND ugc = 1)`
+
+	id := crawl.Id
+	err := ds.DB.QueryRow(query, id, id, id, id, id, id, id, id, id).Scan(
+		&crawl.TotalURLs,
+		&crawl.Noindex,
+		&crawl.BlockedByRobotstxt,
+		&crawl.InternalFollowLinks,
+		&crawl.InternalNoFollowLinks,
+		&crawl.ExternalFollowLinks,
+		&crawl.ExternalNoFollowLinks,
+		&crawl.SponsoredLinks,
+		&crawl.UGCLinks,
+	)
+	if err != nil {
+		log.Printf("RecountCrawl: %v\n", err)
 	}
 }

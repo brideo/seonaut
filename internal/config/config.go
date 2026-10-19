@@ -17,7 +17,21 @@ var ErrMissingAPIKey = errors.New("api key is required (set [api] key in the con
 // CrawlerConfig stores the configuration for the crawler.
 type CrawlerConfig struct {
 	Agent string `mapstructure:"agent"`
+
+	// Limit is the maximum number of URLs a crawl requests, including
+	// any URLs crawled before the crawl was resumed.
+	Limit int `mapstructure:"limit"`
+
+	// TimeoutHours is how long a crawl may run before it is stopped. A
+	// resumed crawl gets a full timeout of its own.
+	TimeoutHours int `mapstructure:"timeout_hours"`
 }
+
+// Default crawl limits, used when the config file and environment don't set them.
+const (
+	DefaultCrawlLimit        = 20000
+	DefaultCrawlTimeoutHours = 2
+)
 
 // HTTPServerConfig stores the configuration for the HTTP server.
 type HTTPServerConfig struct {
@@ -68,6 +82,8 @@ func NewConfig(configFile string) (*Config, error) {
 	// [api] section is missing from the config file.
 	viper.SetDefault("api.key", "")
 	viper.SetDefault("database.table_prefix", DefaultTablePrefix)
+	viper.SetDefault("crawler.limit", DefaultCrawlLimit)
+	viper.SetDefault("crawler.timeout_hours", DefaultCrawlTimeoutHours)
 
 	if err := viper.ReadInConfig(); err != nil {
 		return nil, err

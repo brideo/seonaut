@@ -23,6 +23,7 @@ const (
 	codeMethodNotAllowed = "method_not_allowed"
 	codeUserExists       = "user_exists"
 	codeCrawlInProgress  = "crawl_in_progress"
+	codeNothingToResume  = "nothing_to_resume"
 	codeProjectDeleting  = "project_deleting"
 	codeInternal         = "internal_error"
 )
@@ -68,6 +69,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, codeUserExists, "user already exists")
 	case errors.Is(err, services.ErrCrawlerAlreadyRunning):
 		writeError(w, http.StatusConflict, codeCrawlInProgress, "project is already being crawled")
+	case errors.Is(err, services.ErrNothingToResume):
+		writeError(w, http.StatusConflict, codeNothingToResume, "project has no unfinished crawl to resume")
 	case errors.Is(err, sql.ErrNoRows):
 		writeError(w, http.StatusNotFound, codeNotFound, "project not found")
 	case errors.As(err, &mysqlErr) && mysqlErr.Number == mysqlForeignKeyError:

@@ -37,12 +37,16 @@ func (f *fakeProjects) FindProjectByID(id int64) (models.Project, error) {
 
 type fakeCrawler struct {
 	StartFn      func(p models.Project, b models.BasicAuth) (*models.Crawl, error)
+	ResumeFn     func(p models.Project, b models.BasicAuth) (*models.Crawl, error)
 	StopFn       func(p models.Project)
 	IsCrawlingFn func(p models.Project) bool
 }
 
 func (f *fakeCrawler) StartCrawler(p models.Project, b models.BasicAuth) (*models.Crawl, error) {
 	return f.StartFn(p, b)
+}
+func (f *fakeCrawler) ResumeCrawler(p models.Project, b models.BasicAuth) (*models.Crawl, error) {
+	return f.ResumeFn(p, b)
 }
 func (f *fakeCrawler) StopCrawler(p models.Project)     { f.StopFn(p) }
 func (f *fakeCrawler) IsCrawling(p models.Project) bool { return f.IsCrawlingFn(p) }
@@ -74,6 +78,9 @@ func newHandler() *api.Handler {
 		Crawler: &fakeCrawler{
 			StartFn: func(p models.Project, b models.BasicAuth) (*models.Crawl, error) {
 				return &models.Crawl{Id: 11, ProjectId: p.Id, URL: p.URL}, nil
+			},
+			ResumeFn: func(p models.Project, b models.BasicAuth) (*models.Crawl, error) {
+				return &models.Crawl{Id: 10, ProjectId: p.Id, URL: p.URL}, nil
 			},
 			StopFn:       func(p models.Project) {},
 			IsCrawlingFn: func(p models.Project) bool { return true },
@@ -363,5 +370,38 @@ func TestStopCrawl(t *testing.T) {
 	rec, _ = do(h, http.MethodPost, "/api/projects/999/crawl/stop", "", auth())
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("stop missing project: %d", rec.Code)
+	}
+}
+
+func TestResumeCrawl(t *testing.T) {
+	h := newHandler()
+
+	rec, body := do(h, http.MethodPost, "/api/projects/3/crawl/resume", "", auth())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if body["id"] != float64(10) || body["project_id"] != float64(3) || body["crawling"] != true {
+		t.Errorf("unexpected body: %v", body)
+	}
+
+	rec, _ = do(h, http.MethodPost, "/api/projects/999/crawl/resume", "", auth())
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("missing project: %d", rec.Code)
+	}
+
+	h.Crawler.(*fakeCrawler).ResumeFn = func(models.Project, models.BasicAuth) (*models.Crawl, error) {
+		return nil, services.ErrNothingToResume
+	}
+	rec, body = do(h, http.MethodPost, "/api/projects/3/crawl/resume", "", auth())
+	if rec.Code != http.StatusConflict || errCode(body) != "nothing_to_resume" {
+		t.Errorf("nothing to resume: %d %s", rec.Code, rec.Body.String())
+	}
+
+	h.Crawler.(*fakeCrawler).ResumeFn = func(models.Project, models.BasicAuth) (*models.Crawl, error) {
+		return nil, services.ErrCrawlerAlreadyRunning
+	}
+	rec, body = do(h, http.MethodPost, "/api/projects/3/crawl/resume", "", auth())
+	if rec.Code != http.StatusConflict || errCode(body) != "crawl_in_progress" {
+		t.Errorf("analysing issues: %d %s", rec.Code, rec.Body.String())
 	}
 }

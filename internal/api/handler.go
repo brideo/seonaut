@@ -28,9 +28,10 @@ type (
 		FindProjectByID(id int64) (models.Project, error)
 	}
 
-	// CrawlerService starts and stops crawls.
+	// CrawlerService starts, resumes and stops crawls.
 	CrawlerService interface {
 		StartCrawler(p models.Project, b models.BasicAuth) (*models.Crawl, error)
+		ResumeCrawler(p models.Project, b models.BasicAuth) (*models.Crawl, error)
 		StopCrawler(p models.Project)
 		IsCrawling(p models.Project) bool
 	}
@@ -59,6 +60,7 @@ func (h *Handler) Routes() http.Handler {
 	protected.HandleFunc("POST /api/projects", h.createProject)
 	protected.HandleFunc("POST /api/projects/{id}/crawl", h.startCrawl)
 	protected.HandleFunc("POST /api/projects/{id}/crawl/stop", h.stopCrawl)
+	protected.HandleFunc("POST /api/projects/{id}/crawl/resume", h.resumeCrawl)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", h.health)

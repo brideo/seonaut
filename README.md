@@ -7,7 +7,8 @@ An API-only fork of [SEOnaut](https://github.com/stjudewashere/seonaut), the ope
 The crawler, issue detection engine, database schema and migrations are unchanged from upstream. What's different:
 
 - The HTML user interface, templates, translations and cookie sessions have been removed.
-- A small JSON API, protected by a shared API key, creates users and projects and starts or stops crawls.
+- A small JSON API, protected by a shared API key, creates users and projects and starts, stops or resumes crawls.
+- An interrupted crawl is kept and can be resumed from where it stopped. The crawl limit and timeout are configurable.
 - Crawl results are not exposed over HTTP. Consumers are expected to read them directly from the MySQL database.
 - Every table name can carry a configurable prefix (default `seonaut_`) so SEOnaut can share a database with other services.
 
@@ -54,6 +55,7 @@ The key is a single shared secret. Any caller holding it can act on any user or 
 | `POST` | `/api/projects` | Create a project owned by a user | `201` |
 | `POST` | `/api/projects/{id}/crawl` | Start crawling a project | `202` |
 | `POST` | `/api/projects/{id}/crawl/stop` | Stop the running crawl | `202` |
+| `POST` | `/api/projects/{id}/crawl/resume` | Resume the project's unfinished crawl | `202` |
 
 Request bodies are JSON. Unknown fields are rejected with `400`. Bodies larger than 1 MB are rejected.
 
@@ -140,6 +142,18 @@ curl -X POST localhost:9000/api/projects/1/crawl/stop -H "X-API-Key: $SEONAUT_AP
 
 Returns `404` if the project has no running crawl.
 
+### Resume a crawl
+
+```sh
+curl -X POST localhost:9000/api/projects/1/crawl/resume -H "X-API-Key: $SEONAUT_API_KEY"
+```
+
+Takes the same optional body as starting a crawl and returns the same response, with the id of the crawl being resumed.
+
+The project's last crawl continues under the same id. The URLs it already crawled are skipped, and every URL they link to that hasn't been crawled yet is queued, along with the sitemap. URLs crawled before the resume count towards the crawl limit, and the resumed crawl gets a full timeout of its own. A crawler that is still registered for the project but has stopped responding is replaced.
+
+Returns `409 nothing_to_resume` if the last crawl has finished, and `409 crawl_in_progress` if it has finished crawling and is creating its issues.
+
 ### Errors
 
 All errors share one envelope:
@@ -156,7 +170,8 @@ All errors share one envelope:
 | `404` | `not_found` | Unknown route or project, or no active crawl to stop |
 | `405` | `method_not_allowed` | |
 | `409` | `user_exists` | Email already registered |
-| `409` | `crawl_in_progress` | Project already being crawled |
+| `409` | `crawl_in_progress` | Project already being crawled, or creating its issues when resumed |
+| `409` | `nothing_to_resume` | The project's last crawl has finished |
 | `409` | `project_deleting` | Project is being deleted |
 | `500` | `internal_error` | Anything else. Details are logged, not returned |
 
@@ -166,13 +181,15 @@ Results live in MySQL. With the default prefix the main tables are:
 
 | Table | Contents |
 |---|---|
-| `seonaut_crawls` | One row per crawl: `start`, `end`, `total_urls`, `total_issues`, critical/alert/warning counts. `end` is `NULL` while crawling |
+| `seonaut_crawls` | One row per crawl: `start`, `end`, `issues_end`, `last_activity`, `total_urls`, `total_issues`, critical/alert/warning counts. `end` is `NULL` while crawling |
 | `seonaut_pagereports` | One row per crawled URL: status code, title, description, canonical, depth, etc. |
 | `seonaut_issues` | Issues found, joined to `seonaut_pagereports` and `seonaut_issue_types` |
 | `seonaut_issue_types` | Issue type names and priorities |
 | `seonaut_links`, `seonaut_external_links`, `seonaut_images`, ... | Per-page resources |
 
-A crawl is finished when `seonaut_crawls.end` is not null. Restarting the service deletes any unfinished crawl rows, since crawls run in memory.
+`end` is set when the crawl stops requesting URLs and `issues_end` when its issues have been created, which is when the crawl is finished. `total_urls` and the link totals are only written when it finishes.
+
+While a crawl runs, `last_activity` is updated every 15 seconds. A crawl with a `NULL` `end` whose `last_activity` has stopped moving has stalled or was interrupted by a restart, and can be resumed. On start-up the service deletes the unfinished crawls with no page reports and keeps the others for resuming. Starting a new crawl deletes the project's unfinished crawls once it finishes.
 
 ## Configuration
 
@@ -189,6 +206,8 @@ Settings come from the `config` TOML file and can be overridden with `SEONAUT_<S
 | `database.database` | `SEONAUT_DATABASE_DATABASE` | `seonaut` | |
 | `database.table_prefix` | `SEONAUT_DATABASE_TABLE_PREFIX` | `seonaut_` | Prefix for every table and foreign key name. Set to an empty string for upstream-compatible names |
 | `crawler.agent` | `SEONAUT_CRAWLER_AGENT` | SEOnautBot UA | Default crawler user agent |
+| `crawler.limit` | `SEONAUT_CRAWLER_LIMIT` | `20000` | Maximum URLs per crawl, including any crawled before it was resumed |
+| `crawler.timeout_hours` | `SEONAUT_CRAWLER_TIMEOUT_HOURS` | `2` | Hours a crawl, or a resumed part of one, may run before it is stopped |
 | `api.key` | `SEONAUT_API_KEY` | none, required | Shared API secret |
 
 The table prefix is applied at runtime: migrations and queries are rewritten as they run, so the SQL in the repository keeps upstream's table names. Pick the prefix once before the first start; changing it later leaves the old tables behind.

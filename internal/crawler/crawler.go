@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,8 +26,8 @@ const (
 	// Number of threads a queue will use to crawl a project.
 	consumerThreads = 2
 
-	// Crawler timeout in hours.
-	crawlerTimeout = 2
+	// Default crawler timeout, used when Options.Timeout is not set.
+	crawlerTimeout = 2 * time.Hour
 )
 
 var ErrBlockedByRobotstxt = errors.New("blocked by robots.txt")
@@ -48,6 +49,7 @@ type Options struct {
 	IncludeNoindex  bool
 	CrawlSitemap    bool
 	AllowSubdomains bool
+	Timeout         time.Duration
 }
 
 type Status struct {
@@ -74,6 +76,7 @@ type Crawler struct {
 	cancel           context.CancelFunc
 	context          context.Context
 	callback         ResponseCallback
+	superseded       atomic.Bool
 }
 
 type ClientResponse struct {
@@ -105,7 +108,12 @@ func NewCrawler(parsedURL *url.URL, options *Options, client Client) *Crawler {
 	robotsChecker := NewRobotsChecker(client)
 	sitemapChecker := NewSitemapChecker(client, options.CrawlLimit)
 
-	ctx, cancel := context.WithTimeout(context.Background(), crawlerTimeout*time.Hour)
+	timeout := options.Timeout
+	if timeout <= 0 {
+		timeout = crawlerTimeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
 	return &Crawler{
 		Client:         client,
@@ -158,6 +166,10 @@ func (c *Crawler) Start() {
 		rm.InSitemap = c.sitemapStorage.Seen(rm.URL.String())
 		rm.Blocked = c.robotsChecker.IsBlocked(rm.URL)
 		rm.Timeout = rm.Error != nil
+
+		if c.Superseded() {
+			break
+		}
 
 		c.status.Crawled++
 
@@ -226,6 +238,30 @@ func (c *Crawler) SitemapIsBlocked() bool {
 // Stops the cralwer by canceling the cralwer context.
 func (c *Crawler) Stop() {
 	c.cancel()
+}
+
+// Seed prepares the crawler to continue an interrupted crawl. The seen URLs are
+// marked as visited so they are not requested again, and the crawled count starts
+// at the number of URLs already crawled so the crawl limit covers the whole crawl.
+// The URLs still to crawl are then added with AddRequest. It must be called before Start.
+func (c *Crawler) Seed(seen []string, crawled int) {
+	for _, u := range seen {
+		c.storage.Add(u)
+	}
+
+	c.status.Crawled = crawled
+}
+
+// Supersede stops a crawler that has been replaced by a new one, so it stops
+// handling responses and doesn't finish the crawl.
+func (c *Crawler) Supersede() {
+	c.superseded.Store(true)
+	c.cancel()
+}
+
+// Superseded returns true if the crawler has been replaced by a new one.
+func (c *Crawler) Superseded() bool {
+	return c.superseded.Load()
 }
 
 // setupSitemaps checks if any sitemap exists for the crawler's url. It checks the robots file
